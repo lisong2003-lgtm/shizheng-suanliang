@@ -91,6 +91,15 @@ PIPE_SYSTEM_KEYS = frozenset({
 # 真实契约 geometry 行 category 来自 component_rules（英文键）；管道图层
 # 不命中 component_rules 时 category=unclassified_municipal、system=英文键。
 PIPE_CATEGORY_ZH_RE = re.compile(r"管道|管线|管网|排水管|雨水管|污水管|给水管")
+# 管线综合国标色系（GB/T 50106 及市政管线综合惯例；蓝标系列图示用）
+SYSTEM_COLORS = {
+    "雨水": "#4DA6E8", "排水": "#5DCAA5", "污水": "#8B5A2B",
+    "给水": "#0070C0", "再生水": "#3C3489", "消防": "#1D9E75",
+    "热力": "#E24B4A", "燃气": "#EF9F27", "电力": "#D85A30",
+    "通信": "#639922", "道路": "#5F5E5A", "未分类": "#B4B2A9", "其他": "#888780",
+}
+DEFAULT_COLOR = "#888780"
+
 ROAD_CENTERLINE_KEYS = frozenset({"road_centerline"})
 ROAD_EDGE_KEYS = frozenset({"road_edge", "road_edge_line", "kerb", "kerb_line", "roadside"})
 ROAD_EDGE_ZH_RE = re.compile(r"(道路边线|边线|路缘石|路缘)")
@@ -417,19 +426,35 @@ def _extract(payload: dict, mm_factor: float) -> dict:
     if well_unmapped:
         warnings.append("井类候选 %d 个无法映射到系统，归入「其他」。" % well_unmapped)
 
-    # ---- 道路中线段长（真实契约英文键 road_centerline + 中文回退）----
+    # ---- 道路中线段长（真实契约英文键 road_centerline + 中文回退 + review 弧段按 system=road 归类）----
     road_len_mm = 0.0
     road_seg_count = 0
+    road_review_len_mm = 0.0
     for row in geometry_rows:
         category = str(row.get("category") or "")
         is_centerline = (category.lower() in ROAD_CENTERLINE_KEYS
                          or bool(ROAD_CENTERLINE_ZH_RE.search(category)))
+        # 仅弧段行做 review 归类：弧段来自 ARC 实体、几何确定是道路中心线的一部分；
+        # unclassified 直线段可能是边线/红线，不能当中线，不归类。
+        if not is_centerline and row.get("arc") and (
+                category == "unclassified_municipal"
+                and str(row.get("system") or "").strip().lower() == "road"):
+            is_centerline = True
+            review_flag = True
+        else:
+            review_flag = False
         if not is_centerline:
             continue
         length = _seg_len_mm(row) * mm_factor
         if length > 0:
             road_len_mm += length
             road_seg_count += 1
+            if review_flag:
+                road_review_len_mm += length
+    if road_review_len_mm > 0:
+        warnings.append(
+            "道路几何段中 %.1f m 为识图层 review 状态（system=road 未映射构件类别，含弧段），"
+            "已按道路口径计入，建议人工核对。" % (road_review_len_mm / 1000.0))
 
     # B5: 道路边线段长（双口径交叉核对用）
     road_edge_len_mm = 0.0
@@ -730,6 +755,7 @@ def build(payload_path: str, out_prefix: str, *, payload: dict | None = None,
     cs.write_json(Path(str(out_prefix) + ".json"), out)
     _write_markdown(out, Path(str(out_prefix) + ".md"))
     _write_csv(out, Path(str(out_prefix) + ".csv"))
+    _write_svg_legend(out, Path(str(out_prefix) + ".svg"))
     handoff_members = [
         cs.handoff_member("pipe-%s" % p["system"], length_m=p["length_m_estimate_low"],
                           zone=p["system"], weight_basis="unknown")
@@ -802,6 +828,21 @@ def _write_markdown(out: dict, path: Path) -> None:
         lines += ["", "## 连通性交叉核对", "",
                   "- 开放端点：%s" % (conn.get("open_endpoints") or 0),
                   "- 汇聚节点：%s" % (conn.get("junction_candidates") or 0)]
+    # 蓝标系列图例（国标管线色系，SVG 图示同前缀 .svg）
+    lines += ["", "## 系统色标图例（蓝标系列）", "",
+              "| 色标 | 系统 | 估算带 |", "|---|---|---|"]
+    for item in out.get("pipes_length_estimate") or []:
+        color = SYSTEM_COLORS.get(str(item["system"]), DEFAULT_COLOR)
+        lines.append("| ■ `%s` | %s | %s ~ %s m |" % (color, item["system"],
+                    item["length_m_estimate_low"], item["length_m_estimate_high"]))
+    road = out.get("road_area_estimate")
+    if road:
+        color = SYSTEM_COLORS["道路"]
+        lines.append("| ■ `%s` | 道路 | 面积 %s ~ %s m² |" % (color,
+                    road.get("area_m2_estimate_low"), road.get("area_m2_estimate_high")))
+    lines.append("")
+    lines.append("> 色系参照管线综合国标惯例；配套 SVG 图示：`%s.svg`。图例仅辅助读图，不构成工程量依据。" % Path(out["source_file"]).stem)
+
     lines += ["", "## 警告", ""]
     if out["warnings"]:
         for warning in out["warnings"]:
@@ -810,6 +851,36 @@ def _write_markdown(out: dict, path: Path) -> None:
         lines.append("无")
     lines += ["", "> %s" % out["boundary"], ""]
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _write_svg_legend(out: dict, path: Path) -> None:
+    """蓝标系列图示：按国标管线色系输出 SVG 图例（系统色标 + 延米估算带）。"""
+    rows = []
+    for item in out.get("pipes_length_estimate") or []:
+        rows.append({"name": item["system"], "kind": "pipe",
+                     "value": "%s ~ %s m" % (item["length_m_estimate_low"], item["length_m_estimate_high"])})
+    road = out.get("road_area_estimate")
+    if road:
+        rows.append({"name": "道路", "kind": "road",
+                     "value": "面积 %s ~ %s m²" % (road.get("area_m2_estimate_low"), road.get("area_m2_estimate_high"))})
+    if not rows:
+        path.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="420" height="60">'
+                        '<text x="16" y="32" font-size="14" fill="#888780">本图无市政系统量</text></svg>',
+                        encoding="utf-8")
+        return
+    h = 40 + len(rows) * 34 + 24
+    parts = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 %d" width="100%%">' % h,
+             '<text x="40" y="30" font-size="15" font-weight="500" fill="#444441">市政系统色标图例（估算带，final_quantity=false）</text>']
+    y = 58
+    for i, row in enumerate(rows, 1):
+        color = SYSTEM_COLORS.get(str(row["name"]), DEFAULT_COLOR)
+        parts.append('<rect x="40" y="%d" width="26" height="18" rx="3" fill="%s"/>' % (y - 14, color))
+        parts.append('<text x="78" y="%d" font-size="13" fill="#2C2C2A">%d. %s</text>' % (y, i, row["name"]))
+        parts.append('<text x="240" y="%d" font-size="13" fill="#5F5E5A">%s</text>' % (y, row["value"]))
+        y += 34
+    parts.append('<text x="40" y="%d" font-size="11" fill="#888780">色系参照管线综合国标惯例；蓝标图例仅辅助读图，不构成工程量依据。</text>' % (h - 14))
+    parts.append('</svg>')
+    path.write_text("\n".join(parts), encoding="utf-8")
 
 
 def _write_csv(out: dict, path: Path) -> None:

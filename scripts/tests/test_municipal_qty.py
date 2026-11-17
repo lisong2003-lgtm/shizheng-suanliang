@@ -355,6 +355,67 @@ class CaliberEnhancementTests(unittest.TestCase):
             self.assertEqual(dens[0]["system"], "雨水")
 
 
+class ArcSegmentTests(unittest.TestCase):
+    """弧段行（识图层 ARC 提取产物）的算量处理。"""
+
+    def _arc_row(self, length_units, *, status="candidate", system="road"):
+        return {"category": "unclassified_municipal" if status == "review" else "road_centerline",
+                "system": system, "layer": "DL-ZX", "file": "s.dwg", "sheet": 1,
+                "geometry": [0, 0, 100, 0],
+                "length_drawing_units": length_units,
+                "arc": {"center": [0, 0], "radius": 50, "sweep_rad": 1.0, "basis": "arc_length"},
+                "status": status}
+
+    def test_arc_length_used_over_chord(self):
+        """弧段行优先用 length_drawing_units（弧长），不用弦长。"""
+        payload = _payload(municipal_geometry=[self._arc_row(300.0)])
+        ev = mq._extract(payload, 1.0)
+        self.assertAlmostEqual(ev["road_len_mm"], 300.0)
+
+    def test_review_arc_counts_with_warning(self):
+        """review 弧段按道路口径计入并出警告。"""
+        payload = _payload(municipal_geometry=[self._arc_row(200.0, status="review")])
+        warnings: list[str] = []
+        ev = mq._extract(payload, 1.0)
+        self.assertAlmostEqual(ev["road_len_mm"], 200.0)
+
+    def test_review_straight_line_not_counted(self):
+        """unclassified 直线段（可能为边线/红线）不归入道路中线。"""
+        payload = _payload(municipal_geometry=[
+            {"category": "unclassified_municipal", "system": "road", "layer": "DL-BX",
+             "geometry": [0, 0, 100, 0], "file": "s.dwg", "sheet": 1, "status": "review"}])
+        ev = mq._extract(payload, 1.0)
+        self.assertEqual(ev["road_len_mm"], 0.0)
+
+
+class LegendTests(unittest.TestCase):
+    """蓝标系列图示（SVG + md 色标图例）。"""
+
+    def test_svg_legend_generated_with_colors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = _payload()
+            path = Path(tmp) / "in.json"
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            mq.build(str(path), str(Path(tmp) / "out"), guard={
+                "mode": "manual", "provenance": "test", "warnings": [],
+                "contract_id": "t", "source_sha256": None, "contract_sha256": None})
+            svg = (Path(tmp) / "out.svg").read_text(encoding="utf-8")
+            self.assertIn("市政系统色标图例", svg)
+            self.assertIn('fill="#4DA6E8"', svg)  # 雨水色标
+
+    def test_md_contains_legend_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = _payload()
+            path = Path(tmp) / "in.json"
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            mq.build(str(path), str(Path(tmp) / "out"), guard={
+                "mode": "manual", "provenance": "test", "warnings": [],
+                "contract_id": "t", "source_sha256": None, "contract_sha256": None})
+            md = (Path(tmp) / "out.md").read_text(encoding="utf-8")
+            self.assertIn("系统色标图例", md)
+            self.assertIn("#4DA6E8", md)
+
+
 class ValidateTests(unittest.TestCase):
     def test_valid_payload_passes(self):
         out = mq._validated_payload(_payload())

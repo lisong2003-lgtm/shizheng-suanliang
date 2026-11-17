@@ -2,7 +2,7 @@
 name: shizheng-suanliang
 slug: shizheng-suanliang
 displayName: 市政算量 · 道路管道井类计划口径速算
-version: 1.0.0
+version: 1.1.0
 platforms: [macos, windows, linux]
 author: lis
 license: CC-BY-NC-SA-4.0

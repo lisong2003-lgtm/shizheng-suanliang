@@ -1,5 +1,22 @@
 # CHANGELOG — shizheng-suanliang
 
+## 1.1.0 (2026-11-17) — 遗留问题优化批次 + 蓝标图示
+
+- 识图层 rules 增强：municipal-geometry component_rules 新增消防车道类图层直接映射——
+  road_centerline += 消防车道/消防道路/消防通道/消防环路/消防车道中心线/FIRE LANE/FIRE TRUCK ROUTE；
+  road_edge += 消防车道边线/消防道路边线/FIRE LANE EDGE（防误收）。合成用例 17 项命中与无误伤全过；
+  真图缓存回归确认既有分类无扰动。两侧（workbuddy/codex cad-file-reader 副本）同步。
+- 底座同步：新增跨 skill 同步工具 `sync_base.py`（--status/--verify/--sync）；contract_guard.py 全族统一到
+  shizheng 版（空 unit 分支修复 + audit 形态放行），5 个兄弟 skill 同款 bug 修复并回归通过。
+- 哈希链：识图契约 source_sha256 由 null(source_not_found) 修复为真实原图哈希（从 detail.source_paths 取
+  DWG 算 sha256，与 shasum 比对一致），formal 链路可校验。
+- 弧段口径：市政识图新增 ARC 弧段提取（ezdwg decode_arc_entities + 图层归属，弧长=半径×圆心角），
+  弧长替代弦长；真图对比道路中线 14360.9 → 16839.9 m（+17%）；review 弧段按管道同口径计入+警告；
+  unclassified 直线段不归类（可能是边线/红线）。SPLINE 曲线暂不支持（边界已记录）。
+- 蓝标图示：输出按管线综合国标色系的系统色标图例——md 新增「系统色标图例」表格章节 + 同前缀 SVG 图示文件
+  （雨水/污水/给水/热力/燃气/电力/通信等色标）。
+- 回归：单测 41/41、entry_gate 19/19、self-test 10/10、guard 6/6、lint 103 文件 0 问题、run_regression.sh 全 PASS。
+
 ## 1.0.0 (2026-11-17) — 首个正式版（三平台发布）
 
 阶段 A/B/C 全部完成后的正式版：
@@ -10,7 +27,6 @@
 - 生产能力：bus 正式链路（push→pull→formal，contract_id 可追溯）、5 万段 1.32s 性能基准、
   一键回归 run_regression.sh。
 
-## 0.3.0 (2026-11-17)
 ## 0.3.0 (2026-11-17) — 阶段 B 口径增强 + 阶段 C1-C3
 
 - C1 bus 正式链路实测：真图契约 push → --from-contract pull → formal 算量（contract_mode=formal，
@@ -28,7 +44,6 @@
 - 回归：单测 35/35（新增 CaliberEnhancementTests 6 项）、entry_gate 19/19、self-test 10/10、guard 6/6、lint 33 文件 0 问题。
 - 真图复核：经十一路管网图 + --road-width 20 输出中线 14360.9 m × 20 m = 28.7~33.0 万 m²。
 
-## 0.2.0 (2026-11-17)
 ## 0.2.0 (2026-11-17) — 真图全链路验证通过
 
 用 2 张真实 DWG（经十一路室外管网、总平面竖向图）跑通 cad_scan → 市政识图 → 算量全链路，据此修复：
