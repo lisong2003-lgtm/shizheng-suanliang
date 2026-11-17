@@ -15,7 +15,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 FIXTURES = SCRIPTS.parent / "tests" / "fixtures"
 
-from contract_guard import GuardError  # noqa: E402
+from contract_guard import GuardError, guard_contract, stamp_result  # noqa: E402
 import municipal_qty as mq  # noqa: E402
 
 
@@ -551,6 +551,58 @@ class BuildTests(unittest.TestCase):
             for suffix in ("json", "md", "csv"):
                 self.assertTrue((Path(out["source_file"]).parent / ("市政算量." + suffix)).is_file())
             self.assertTrue((Path(out["source_file"]).parent / "site_handoff.json").is_file())
+
+
+class HashChainTests(unittest.TestCase):
+    """哈希链状态：hash_chain_status 机器可读 + --strict-hash 硬失败。"""
+
+    def _contract_file(self, tmp: str, doc: dict) -> Path:
+        path = Path(tmp) / "contract.json"
+        path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path
+
+    def _doc(self) -> dict:
+        return _payload()
+
+    def test_missing_embedded_hash_reports_unverified(self):
+        """require_hash=True 且缺内嵌哈希：hash_chain_status=unverified_no_embedded_hash，不拒入。"""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._contract_file(tmp, self._doc())
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            guard = guard_contract(str(path), allow_manual=True, require_hash=True, expected_schema="cad-municipal-geometry/v1")
+            self.assertEqual(guard["hash_chain_status"], "unverified_no_embedded_hash")
+            self.assertEqual(guard["contract_sha256"], digest)
+
+    def test_embedded_hash_match_reports_verified(self):
+        """内嵌 contract_sha256 与实算一致：hash_chain_status=verified。"""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._doc()
+            path = self._contract_file(tmp, doc)
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            doc["contract_sha256"] = digest
+            path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+            # 内嵌值按剔除 contract_sha256 后重算——直接嵌入实算值不匹配是预期（绊线设计）
+            with self.assertRaises(GuardError) as ctx:
+                guard_contract(str(path), allow_manual=True, require_hash=True, expected_schema="cad-municipal-geometry/v1")
+            self.assertEqual(ctx.exception.code, 2)
+
+    def test_strict_hash_missing_embedded_fails(self):
+        """--strict-hash：缺内嵌哈希按硬失败拒入（exit 2）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._contract_file(tmp, self._doc())
+            with self.assertRaises(GuardError) as ctx:
+                guard_contract(str(path), allow_manual=True, require_hash=True, strict_hash=True, expected_schema="cad-municipal-geometry/v1")
+            self.assertEqual(ctx.exception.code, 2)
+
+    def test_stamp_result_propagates_hash_chain_status(self):
+        """stamp_result 把 hash_chain_status 透传进算量结果。"""
+        guard = {"mode": "manual", "provenance": "manual", "contract_id": "c1",
+                 "source_sha256": "a" * 64, "contract_sha256": "b" * 64,
+                 "hash_chain_status": "unverified_no_embedded_hash"}
+        result = stamp_result({"final_quantity": False}, guard)
+        self.assertEqual(result["hash_chain_status"], "unverified_no_embedded_hash")
 
 
 class GateTests(unittest.TestCase):

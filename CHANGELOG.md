@@ -1,5 +1,17 @@
 # CHANGELOG — shizheng-suanliang
 
+## 1.1.1 (2026-11-17) — ClawHub 扫描问题修复
+
+- 哈希链状态机器可读：guard 输出新增 `hash_chain_status`（verified / unverified_no_embedded_hash /
+  require_hash_off），算量结果 stamp 透传；缺内嵌哈希的警告升级为可程序判定的显式状态。
+- 新增 `--strict-hash`：require_hash=True 且契约未内嵌 contract_sha256 时按硬失败拒入（exit 2），
+  供正式链路需要强校验时使用；默认行为不变（警告放行，兼容识图直连形态）。
+- formal bus 分支修复：`--from-contract` 现在正确透传 `--unit-scale` / `--road-width` 手工参数
+  （此前静默忽略，与文件入口行为不一致）。
+- 底座同步：contract_guard.py 更新后经 sync_base.py 同步 5 个兄弟 skill，全族 self-test 6/6。
+- 回归：单测 44/44（新增 HashChainTests 3 项）、entry_gate 19/19、self-test 10/10、guard 6/6、
+  lint 112 文件 0 问题、run_regression.sh 全 PASS。
+
 ## 1.1.0 (2026-11-17) — 遗留问题优化批次 + 蓝标图示
 
 - 识图层 rules 增强：municipal-geometry component_rules 新增消防车道类图层直接映射——

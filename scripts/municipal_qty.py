@@ -1268,6 +1268,7 @@ def main() -> None:
         payload = _validated_payload(payload)
         safe_id = re.sub(r"[^0-9A-Za-z._-]+", "-", a.from_contract)[:64] or "contract"
         build("bus-" + safe_id, a.out_prefix, payload=payload,
+              unit_scale_override=a.unit_scale, road_width_override=a.road_width,
               guard=guard, run_manifest=_run_manifest(guard))
         return
 
